@@ -43,9 +43,14 @@ cp "$(dirname "$0")/statshud.py" "${PREFIX_DATA}/statshud.py"
 chmod +x "${PREFIX_DATA}/statshud.py"
 
 ln -sf "${PREFIX_DATA}/statshud.py" "${PREFIX_BIN}/statshud"
+rm -f "${PREFIX_BIN}/glass-sysmon"
+rm -rf "${HOME}/.local/share/glass-sysmon"
 
 echo "Installing desktop launcher..."
 cp "$(dirname "$0")/statshud.desktop" "${PREFIX_APP}/statshud.desktop"
+if [ -d "${HOME}/.config/autostart" ]; then
+    cp "$(dirname "$0")/statshud.desktop" "${HOME}/.config/autostart/statshud.desktop"
+fi
 
 # KDE Plasma KWin rule configuration
 if command -v kwriteconfig6 &>/dev/null; then

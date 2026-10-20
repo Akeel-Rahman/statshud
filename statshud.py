@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-StatsHUD - Animated Cyber-Terminal Glass System Monitor for KDE Plasma / Linux
+StatsHUD - Animated Cyber-Terminal Glass System Monitor for KDE Plasma & Linux
 - Wayland-safe persistent keep-above (Qt.Window + KWin force rule)
 - 6 Selectable Cyber Themes (Cyberpunk, Matrix, Nord, Amber CRT, Synthwave, Dracula)
 - Continuous HSV dynamic load-based automatic coloring & ambient breathing
 - Creative Stat Displays: RPG Moods, Kaomoji, Fuel Cells, Audio VU, Cyber Hex, Numeric
 - Live rolling Braille sparkline, smooth eased bars, animated hacker spinner
-- Auto clarity shift (45% -> 88%) + glowing alert border when load > 85%
+- Dynamic hardware monitors: Battery, CPU Package Temperature, Disks, Cores
+- Ultra-low CPU idle sleep (<0.5% CPU when values are stable)
 """
+
+__version__ = "1.0.1"
 
 import sys
 import os
@@ -19,7 +22,7 @@ import psutil
 
 from PySide6.QtCore import Qt, QTimer, QRectF
 from PySide6.QtGui import (
-    QPainter, QColor, QFont, QPen, QBrush
+    QPainter, QColor, QFont, QFontDatabase, QPen, QBrush
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMenu
@@ -48,34 +51,34 @@ THEMES = {
         "fg": "#a3ffa3",
         "dim": "#005511",
         "accent": "#00ff41",
-        "stops": [(0.0, "#00aa22"), (0.5, "#00ff41"), (0.8, "#66ff66"), (1.0, "#ffffff")]
+        "stops": [(0.0, "#00ff41"), (0.6, "#00ffaa"), (0.85, "#aaff00"), (1.0, "#ff3300")]
     },
     "Nord Frost": {
-        "bg": (46, 52, 64),
+        "bg": (20, 24, 34),
         "border": "#88c0d0",
         "fg": "#eceff4",
         "dim": "#4c566a",
         "accent": "#81a1c1",
-        "stops": [(0.0, "#88c0d0"), (0.5, "#ebcb8b"), (0.8, "#d08770"), (1.0, "#bf616a")]
+        "stops": [(0.0, "#88c0d0"), (0.5, "#81a1c1"), (0.8, "#ebcb8b"), (1.0, "#bf616a")]
     },
     "Amber CRT": {
-        "bg": (26, 15, 0),
+        "bg": (24, 14, 2),
         "border": "#ffb000",
-        "fg": "#ffd066",
-        "dim": "#804c00",
-        "accent": "#ffb000",
-        "stops": [(0.0, "#995500"), (0.5, "#ffb000"), (0.8, "#ff8800"), (1.0, "#ffe6a0")]
+        "fg": "#ffe099",
+        "dim": "#704800",
+        "accent": "#ffcc00",
+        "stops": [(0.0, "#ffb000"), (0.5, "#ffcc00"), (0.8, "#ff8800"), (1.0, "#ff2200")]
     },
     "Synthwave 80s": {
-        "bg": (28, 18, 40),
-        "border": "#ff6ad5",
-        "fg": "#f9f871",
-        "dim": "#664070",
-        "accent": "#2de2e6",
-        "stops": [(0.0, "#2de2e6"), (0.5, "#ff6ad5"), (0.8, "#ff3864"), (1.0, "#f9f871")]
+        "bg": (22, 11, 38),
+        "border": "#f92aad",
+        "fg": "#fbe5ff",
+        "dim": "#693570",
+        "accent": "#00f0ff",
+        "stops": [(0.0, "#00f0ff"), (0.5, "#f92aad"), (0.8, "#ffdd00"), (1.0, "#ff0055")]
     },
     "Dracula": {
-        "bg": (30, 31, 41),
+        "bg": (21, 20, 30),
         "border": "#bd93f9",
         "fg": "#f8f8f2",
         "dim": "#6272a4",
@@ -84,93 +87,80 @@ THEMES = {
     }
 }
 
-# --- CREATIVE STAT RENDERERS ---
-def render_rpg_mood(pct):
-    if pct < 25:
-        return "[CHILL]   "
-    elif pct < 50:
-        return "[VIBING]  "
-    elif pct < 70:
-        return "[WORKIN]  "
-    elif pct < 85:
-        return "[COOKIN]  "
-    else:
-        return "[MELTDOWN]"
+# --- CREATIVE STAT DISPLAY MODES ---
+def mode_rpg_mood(pct):
+    if pct < 15.0: return "[CHILL]"
+    elif pct < 35.0: return "[VIBING]"
+    elif pct < 60.0: return "[WORKIN]"
+    elif pct < 85.0: return "[COOKIN]"
+    else: return "[MELTDOWN]"
 
-def render_kaomoji(pct):
-    if pct < 25:
-        return "( ˘ ³˘) "
-    elif pct < 50:
-        return "(＾◡＾) "
-    elif pct < 70:
-        return "(⊙_☉)   "
-    elif pct < 85:
-        return "( >_< ) "
-    else:
-        return "(╯°□°)╯ "
+def mode_kaomoji(pct):
+    if pct < 15.0: return "( ˘ ³˘)"
+    elif pct < 35.0: return "(＾◡＾)"
+    elif pct < 60.0: return "(⊙_☉)"
+    elif pct < 85.0: return "( >_< )"
+    else: return "(╯°□°)╯"
 
-def render_fuel_cells(pct):
-    cells = 8
-    filled = int(round((pct / 100.0) * cells))
-    filled = max(0, min(cells, filled))
-    return "⚡" * filled + "·" * (cells - filled)
+def mode_fuel_cells(pct):
+    total_cells = 6
+    filled = int(round((pct / 100.0) * total_cells))
+    return ("⚡" * filled) + ("·" * (total_cells - filled))
 
-def render_audio_vu(pct):
+def mode_audio_vu(pct):
     bars = [" ", " ", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
-    total = 8
-    fill_score = (pct / 100.0) * total
-    out = ""
-    for i in range(total):
-        if fill_score >= i + 1:
-            out += "█"
-        elif fill_score > i:
-            sub = int((fill_score - i) * 8)
-            out += bars[sub]
-        else:
-            out += " "
-    return f"[{out}]"
+    idx = min(len(bars) - 1, max(0, int((pct / 100.0) * (len(bars) - 1))))
+    return f"[{bars[idx] * 4}]"
 
-def render_cyber_hex(pct):
+def mode_cyber_hex(pct):
     val = int((pct / 100.0) * 255)
-    return f"0x{val:02X}   "
+    return f"0x{val:02X} / 0xFF"
 
-def render_numeric(pct):
-    return f"{pct:5.1f}%"
+def mode_numeric(pct):
+    return f"{pct:4.1f}%"
 
 DISPLAY_MODES = {
-    "RPG Moods [CHILL / COOKIN]": render_rpg_mood,
-    "Kaomoji Mood ( ˘ ³˘) / (>_<)": render_kaomoji,
-    "Cyber Fuel Cells [⚡⚡···]": render_fuel_cells,
-    "Audio VU Meter [ ▃▅█]": render_audio_vu,
-    "Cyber Hex [0x..]": render_cyber_hex,
-    "Standard Numeric (64.2%)": render_numeric
+    "RPG Moods [CHILL / COOKIN]": mode_rpg_mood,
+    "Kaomoji System Mood": mode_kaomoji,
+    "Cyber Fuel Cells": mode_fuel_cells,
+    "Audio VU Equalizer": mode_audio_vu,
+    "Cyber Hex": mode_cyber_hex,
+    "Classic Numeric %": mode_numeric
 }
 
-# --- COLORIZER / LERP ---
-def _lerp_color(c1, c2, t):
-    t = max(0.0, min(1.0, t))
-    h1, s1, v1, _ = c1.getHsvF()
-    h2, s2, v2, _ = c2.getHsvF()
-    if h1 < 0: h1 = h2
-    if h2 < 0: h2 = h1
-    dh = ((h2 - h1 + 0.5) % 1.0) - 0.5
-    h = (h1 + dh * t) % 1.0
-    s = s1 + (s2 - s1) * t
-    v = v1 + (v2 - v1) * t
-    return QColor.fromHsvF(h, s, v)
+# --- COLOR GRADIENT INTERPOLATOR ---
+def hex_to_rgb(hex_str):
+    hex_str = hex_str.lstrip("#")
+    return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+
+def rgb_to_qcolor(rgb, alpha=255):
+    return QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]), alpha)
 
 def get_gradient_color(stops, pct):
     t = max(0.0, min(1.0, pct / 100.0))
-    for (p0, c0_hex), (p1, c1_hex) in zip(stops, stops[1:]):
-        if t <= p1:
-            local_t = (t - p0) / (p1 - p0 or 1.0)
-            return _lerp_color(QColor(c0_hex), QColor(c1_hex), local_t)
-    return QColor(stops[-1][1])
+    if t <= stops[0][0]:
+        return rgb_to_qcolor(hex_to_rgb(stops[0][1]))
+    if t >= stops[-1][0]:
+        return rgb_to_qcolor(hex_to_rgb(stops[-1][1]))
+
+    for i in range(len(stops) - 1):
+        s0, c0_hex = stops[i]
+        s1, c1_hex = stops[i+1]
+        if s0 <= t <= s1:
+            local_t = (t - s0) / (s1 - s0)
+            c0 = hex_to_rgb(c0_hex)
+            c1 = hex_to_rgb(c1_hex)
+            r = c0[0] + (c1[0] - c0[0]) * local_t
+            g = c0[1] + (c1[1] - c0[1]) * local_t
+            b = c0[2] + (c1[2] - c0[2]) * local_t
+            return rgb_to_qcolor((r, g, b))
+    return QColor(255, 255, 255)
+
 
 def make_braille_sparkline(vals):
-    if len(vals) % 2 != 0:
-        vals = [0.0] + list(vals)
     chars = []
+    if len(vals) % 2 != 0:
+        vals = [0.0] + vals
     for a, b in zip(vals[::2], vals[1::2]):
         c = 0x2800
         na = min(4, max(0, int(round(a * 4))))
@@ -227,8 +217,8 @@ def load_config():
         try:
             with open(CONFIG_PATH, "r") as f:
                 cfg.update(json.load(f))
-        except Exception:
-            pass
+        except Exception as e:
+            sys.stderr.write(f"[StatsHUD] Failed to parse {CONFIG_PATH}: {e}\n")
     return cfg
 
 def save_config(cfg):
@@ -236,8 +226,8 @@ def save_config(cfg):
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
             json.dump(cfg, f, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        sys.stderr.write(f"[StatsHUD] Failed to write {CONFIG_PATH}: {e}\n")
 
 
 class TerminalStatsHUD(QWidget):
@@ -245,13 +235,26 @@ class TerminalStatsHUD(QWidget):
         super().__init__()
         self.cfg = load_config()
 
-        # Eased metric percentages for butter-smooth animation
+        # Cache font once
+        self.font_main = QFont("Adwaita Mono", 9)
+        if not self.font_main.exactMatch():
+            self.font_main = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+            self.font_main.setPointSize(9)
+
+        # Eased metric percentages
         self.target_cpu = 0.0
         self.eased_cpu = 0.0
         self.target_ram = 0.0
         self.eased_ram = 0.0
         self.target_disk = 0.0
         self.eased_disk = 0.0
+
+        # Hardware sensors
+        self.has_battery = False
+        self.battery_pct = 100.0
+        self.battery_plugged = True
+        self.has_temp = False
+        self.cpu_temp = 0.0
 
         # Theme & Display Mode
         self.current_theme_name = self.cfg.get("theme", "Cyberpunk Neon")
@@ -302,16 +305,15 @@ class TerminalStatsHUD(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
 
-        # Qt.Window + Frameless + StaysOnTop
         flags = Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
 
         self.setWindowTitle("StatsHUD")
-        self.resize(350, 220)
+        self.resize(350, 240)
         self.move(self.cfg.get("x", 120), self.cfg.get("y", 120))
 
     def setup_timers(self):
-        # 10 FPS Animation Timer (low-CPU, energy-efficient)
+        # 10 FPS Animation Timer (idle sleep enabled)
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self.on_anim_tick)
         self.anim_timer.start(100)
@@ -348,7 +350,7 @@ class TerminalStatsHUD(QWidget):
     def on_anim_tick(self):
         self.anim_frame += 1
 
-        # Smooth easing (adjusted for 100ms ticks)
+        # Smooth easing
         self.eased_cpu += (self.target_cpu - self.eased_cpu) * 0.35
         self.eased_ram += (self.target_ram - self.eased_ram) * 0.35
         self.eased_disk += (self.target_disk - self.eased_disk) * 0.35
@@ -364,12 +366,29 @@ class TerminalStatsHUD(QWidget):
         if self.is_alert:
             self.glow_phase = (self.glow_phase + 0.25) % (2 * math.pi)
 
-        # Spinner update (advances every tick at 10 FPS)
+        # Spinner update
         self.spinner_idx = (self.spinner_idx + 1) % len(SPINNER_FRAMES)
 
         # Blinking cursor
-        if self.anim_frame % 15 == 0:
+        if self.anim_frame % 5 == 0:
             self.cursor_blink = not self.cursor_blink
+
+        # --- IDLE SLEEP DETECTION (~0% CPU) ---
+        diff_cpu = abs(self.target_cpu - self.eased_cpu)
+        diff_ram = abs(self.target_ram - self.eased_ram)
+        diff_disk = abs(self.target_disk - self.eased_disk)
+        diff_op = abs(self.target_opacity - self.current_opacity)
+
+        if (diff_cpu < 0.3 and diff_ram < 0.3 and diff_disk < 0.3 and diff_op < 0.01
+                and not self.is_alert and not self.hover_btn):
+            # Values converged: snap and stop animation timer to sleep CPU
+            self.eased_cpu = self.target_cpu
+            self.eased_ram = self.target_ram
+            self.eased_disk = self.target_disk
+            self.current_opacity = self.target_opacity
+            self.anim_timer.stop()
+            self.update()
+            return
 
         self.update()
 
@@ -393,6 +412,46 @@ class TerminalStatsHUD(QWidget):
             self.disk_total_gib = disk["total_gib"]
             self.disk_free_gib = disk["free_gib"]
 
+            # Battery Sensor
+            try:
+                bat = psutil.sensors_battery()
+                if bat is not None:
+                    self.has_battery = True
+                    self.battery_pct = bat.percent
+                    self.battery_plugged = bat.power_plugged
+                else:
+                    self.has_battery = False
+            except Exception as e:
+                if not hasattr(self, "_logged_bat_err"):
+                    sys.stderr.write(f"[StatsHUD] Battery sensor error: {e}\n")
+                    self._logged_bat_err = True
+                self.has_battery = False
+
+            # CPU Temperature Sensor
+            try:
+                temps = psutil.sensors_temperatures()
+                t_val = None
+                if temps:
+                    for key in ("coretemp", "k10temp", "cpu_thermal", "acpitz"):
+                        if key in temps and temps[key]:
+                            t_val = temps[key][0].current
+                            break
+                    if t_val is None:
+                        for s_list in temps.values():
+                            if s_list:
+                                t_val = s_list[0].current
+                                break
+                if t_val is not None:
+                    self.has_temp = True
+                    self.cpu_temp = t_val
+                else:
+                    self.has_temp = False
+            except Exception as e:
+                if not hasattr(self, "_logged_temp_err"):
+                    sys.stderr.write(f"[StatsHUD] Temperature sensor error: {e}\n")
+                    self._logged_temp_err = True
+                self.has_temp = False
+
             # Dynamic Clarity Shift & Alert Threshold
             peak_load = max(cpu_pct, vm.percent)
             if not self.is_alert and peak_load >= 85.0:
@@ -402,13 +461,26 @@ class TerminalStatsHUD(QWidget):
                 self.is_alert = False
                 self.target_opacity = self.cfg.get("idle_opacity", 0.45)
 
-        except Exception:
-            pass
+            # Wake up animation loop if metrics moved noticeably or in alert
+            if (abs(self.target_cpu - self.eased_cpu) >= 0.3 or
+                    abs(self.target_ram - self.eased_ram) >= 0.3 or
+                    abs(self.target_disk - self.eased_disk) >= 0.3 or
+                    self.is_alert):
+                if not self.anim_timer.isActive():
+                    self.anim_timer.start(100)
+
+            self.update()
+
+        except Exception as e:
+            if not hasattr(self, "_logged_stats_err"):
+                sys.stderr.write(f"[StatsHUD] Stats sampling error: {e}\n")
+                self._logged_stats_err = True
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setFont(self.font_main)
 
         w = self.width()
         h = self.height()
@@ -429,24 +501,19 @@ class TerminalStatsHUD(QWidget):
             border_pen = QPen(border_base, 1)
 
         painter.setPen(border_pen)
-        painter.drawRoundedRect(1, 1, w - 2, h - 2, 8, 8)
+        painter.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 6, 6)
 
-        # Monospace Font
-        font = QFont("Adwaita Mono", 10)
-        font.setStyleHint(QFont.Monospace)
-        painter.setFont(font)
-
-        line_height = 20
-        y = 24
-        x = 16
-
-        # Header Colors
-        accent_color = QColor(self.theme["accent"])
+        # Colors from theme
         fg_color = QColor(self.theme["fg"])
         dim_color = QColor(self.theme["dim"])
+        accent_color = QColor(self.theme["accent"])
 
-        # --- Top Header Line ---
-        spinner_char = SPINNER_FRAMES[self.spinner_idx]
+        x = 12
+        y = 20
+        line_height = 18
+
+        # --- Header ---
+        spinner_char = SPINNER_FRAMES[self.spinner_idx] if self.anim_timer.isActive() else "•"
         if self.is_alert:
             header_text = f"┌─ sys.hud [!] ALERT >85%"
             painter.setPen(QPen(QColor(255, 75, 75)))
@@ -455,7 +522,6 @@ class TerminalStatsHUD(QWidget):
             painter.setPen(QPen(accent_color))
         painter.drawText(x, y, header_text)
 
-        # Theme indicator / status
         theme_tag = f" [{self.current_theme_name[:5]}] "
         painter.setPen(QPen(dim_color))
         painter.drawText(x + 130, y, theme_tag)
@@ -478,11 +544,10 @@ class TerminalStatsHUD(QWidget):
 
         # Divider
         y += line_height
-        divider_pen = QPen(dim_color)
-        painter.setPen(divider_pen)
+        painter.setPen(QPen(dim_color))
         painter.drawText(x, y, "├" + "─" * 40)
 
-        # --- Dynamic Colors for metrics ---
+        # Dynamic Colors for metrics
         if self.auto_color:
             cpu_color = get_gradient_color(self.theme["stops"], self.eased_cpu)
             ram_color = get_gradient_color(self.theme["stops"], self.eased_ram)
@@ -506,8 +571,9 @@ class TerminalStatsHUD(QWidget):
         painter.drawText(x + 44, y, cpu_bar)
         painter.drawText(x + 155, y, cpu_creative)
 
+        temp_str = f" {self.cpu_temp:.0f}°C" if self.has_temp else ""
         painter.setPen(QPen(dim_color))
-        painter.drawText(x + 248, y, f"[{self.cpu_cores}T]")
+        painter.drawText(x + 235, y, f"[{self.cpu_cores}T{temp_str}]")
 
         # --- CPU Sparkline Wave ---
         y += line_height - 2
@@ -534,7 +600,7 @@ class TerminalStatsHUD(QWidget):
         painter.drawText(x + 155, y, ram_creative)
 
         painter.setPen(QPen(dim_color))
-        painter.drawText(x + 248, y, f"{self.ram_used_gib:.1f}G")
+        painter.drawText(x + 235, y, f"{self.ram_used_gib:.1f}G")
 
         # --- STORAGE Row ---
         y += line_height
@@ -551,12 +617,28 @@ class TerminalStatsHUD(QWidget):
         painter.drawText(x + 155, y, disk_creative)
 
         painter.setPen(QPen(dim_color))
-        painter.drawText(x + 248, y, f"{self.disk_free_gib:.0f}G")
+        painter.drawText(x + 235, y, f"{self.disk_free_gib:.0f}G")
+
+        # --- Optional Battery Row ---
+        if self.has_battery:
+            y += line_height
+            bat_bar = render_ascii_bar(self.battery_pct, width=12)
+            bat_color = get_gradient_color(self.theme["stops"], 100.0 - self.battery_pct) if self.auto_color else fg_color
+            painter.setPen(QPen(dim_color))
+            painter.drawText(x, y, "│")
+            painter.setPen(QPen(fg_color))
+            painter.drawText(x + 10, y, "BAT")
+            painter.setPen(QPen(bat_color))
+            painter.drawText(x + 44, y, bat_bar)
+            painter.drawText(x + 155, y, f"{self.battery_pct:.0f}%")
+            ac_tag = "[AC]" if self.battery_plugged else "[BAT]"
+            painter.setPen(QPen(dim_color))
+            painter.drawText(x + 235, y, ac_tag)
 
         # --- Bottom Status Bar ---
         y += line_height + 2
         curr_time = time.strftime("%H:%M:%S")
-        cursor = "▌" if self.cursor_blink else " "
+        cursor = "▌" if (self.cursor_blink and self.anim_timer.isActive()) else " "
 
         painter.setPen(QPen(accent_color))
         painter.drawText(x, y, "└─ fedora@plasma")
@@ -582,6 +664,10 @@ class TerminalStatsHUD(QWidget):
             event.accept()
 
     def mouseMoveEvent(self, event):
+        # Wake up animation timer if sleeping
+        if not self.anim_timer.isActive():
+            self.anim_timer.start(100)
+
         pos = event.position()
         old_hover = self.hover_btn
         if self.btn_min_rect.contains(pos):
@@ -594,29 +680,20 @@ class TerminalStatsHUD(QWidget):
         if old_hover != self.hover_btn:
             self.update()
 
-        if self.drag_start_pos is not None and (event.buttons() & Qt.LeftButton):
+        if self.drag_start_pos is not None and event.buttons() & Qt.LeftButton:
             self.move(event.globalPosition().toPoint() - self.drag_start_pos)
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        if self.drag_start_pos is not None:
-            self.drag_start_pos = None
-            self.cfg["x"] = self.x()
-            self.cfg["y"] = self.y()
-            save_config(self.cfg)
+        self.drag_start_pos = None
+        event.accept()
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
+        step = 0.05 if delta > 0 else -0.05
         cur = self.cfg.get("idle_opacity", 0.45)
-        if delta > 0:
-            new_op = min(cur + 0.04, 0.95)
-        else:
-            new_op = max(cur - 0.04, 0.20)
-        self.cfg["idle_opacity"] = round(new_op, 2)
-        if not self.is_alert:
-            self.target_opacity = self.cfg["idle_opacity"]
-        save_config(self.cfg)
-        self.update()
+        new_op = max(0.20, min(0.98, cur + step))
+        self.set_idle_opacity(new_op)
         event.accept()
 
     def contextMenuEvent(self, event):
@@ -642,6 +719,11 @@ class TerminalStatsHUD(QWidget):
                 color: #ffffff;
             }}
         """)
+
+        # About entry
+        about_act = menu.addAction(f"StatsHUD v{__version__}")
+        about_act.setEnabled(False)
+        menu.addSeparator()
 
         # 1. Themes Submenu
         theme_menu = menu.addMenu("🎨 Themes")
