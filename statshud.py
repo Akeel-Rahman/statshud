@@ -10,7 +10,7 @@ StatsHUD - Animated Cyber-Terminal Glass System Monitor for KDE Plasma & Linux
 - Ultra-low CPU idle sleep (<0.5% CPU when values are stable)
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 import sys
 import os

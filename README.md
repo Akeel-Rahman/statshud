@@ -32,7 +32,9 @@
   - 🎚 **Audio VU Equalizer:** `[ ▂▃▄▅   ]`
   - 💻 **Cyber Hex:** `0x1F / 0x7A`
   - 🔢 **Classic Numeric:** `64.2%`
-- **⚡ Energy Efficient:** Optimized event loop (<1% idle CPU) that automatically pauses animation repaints when minimized or hidden.
+- **🌡 Live CPU Temperature Bar:** Dedicated temperature row with dynamic thermal gradient bar and creative mode status.
+- **🔋 Battery & Power Sensing:** Real-time battery charge bar, charging state (`[AC]`/`[BAT]`), and estimated runtime (`[2h15m]`).
+- **⚡ Energy Efficient (~0% Idle CPU):** Adaptive idle sleep halts the animation engine whenever metrics converge, resuming instantly on load changes.
 
 ---
 
