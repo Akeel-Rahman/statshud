@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=StatsHUD
+Comment=Animated Cyber-Terminal Glass System Monitor
+Exec=statshud
+Icon=utilities-system-monitor
+Terminal=false
+Type=Application
+Categories=Utility;System;Monitor;
+StartupNotify=false
+StartupWMClass=statshud
