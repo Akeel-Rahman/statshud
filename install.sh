@@ -46,11 +46,12 @@ ln -sf "${PREFIX_DATA}/statshud.py" "${PREFIX_BIN}/statshud"
 
 echo "Installing desktop launcher..."
 cp "$(dirname "$0")/statshud.desktop" "${PREFIX_APP}/statshud.desktop"
+sed -i "s|^Exec=.*|Exec=${PREFIX_BIN}/statshud|" "${PREFIX_APP}/statshud.desktop"
 
 if [[ "$*" == *"--autostart"* ]]; then
     echo "Enabling autostart on login..."
     mkdir -p "${HOME}/.config/autostart"
-    cp "$(dirname "$0")/statshud.desktop" "${HOME}/.config/autostart/statshud.desktop"
+    cp "${PREFIX_APP}/statshud.desktop" "${HOME}/.config/autostart/statshud.desktop"
 fi
 
 # KDE Plasma KWin rule configuration

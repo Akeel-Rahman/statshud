@@ -327,7 +327,11 @@ class TerminalStatsHUD(QWidget):
 
         self.setWindowTitle("StatsHUD")
         self.resize(350, 255)
-        self.move(self.cfg.get("x", 120), self.cfg.get("y", 120))
+        win_x = self.cfg.get("x", 120)
+        win_y = self.cfg.get("y", 120)
+        if win_x <= 0 or win_y <= 0:
+            win_x, win_y = 120, 120
+        self.move(win_x, win_y)
 
     def setup_timers(self):
         # 10 FPS Animation Timer (idle sleep enabled)
@@ -852,8 +856,9 @@ class TerminalStatsHUD(QWidget):
         self.stats_timer.setInterval(ms)
 
     def closeEvent(self, event):
-        self.cfg["x"] = self.x()
-        self.cfg["y"] = self.y()
+        if self.x() > 0 or self.y() > 0:
+            self.cfg["x"] = self.x()
+            self.cfg["y"] = self.y()
         save_config(self.cfg)
         event.accept()
 
